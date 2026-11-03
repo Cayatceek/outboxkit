@@ -110,6 +110,39 @@ class PostgresOutboxIntegrationTest {
         assertEquals(0, countPending());
     }
 
+    @Test
+    void concurrentDispatchersSkipRowsLockedByAnotherWorker() throws Exception {
+        OutboxEvent earlier = new OutboxEvent(UUID.randomUUID(), "wallet", "w-4", "FIRST", "{}",
+            Instant.parse("2026-02-01T00:00:00Z"));
+        OutboxEvent later = new OutboxEvent(UUID.randomUUID(), "wallet", "w-4", "SECOND", "{}",
+            Instant.parse("2026-02-01T00:00:01Z"));
+        enqueueCommitted(earlier);
+        enqueueCommitted(later);
+        var enteredPublisher = new java.util.concurrent.CountDownLatch(1);
+        var releasePublisher = new java.util.concurrent.CountDownLatch(1);
+        var seen = java.util.concurrent.ConcurrentHashMap.<UUID>newKeySet();
+
+        try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            var first = executor.submit(() -> new OutboxDispatcher(dataSource, event -> {
+                enteredPublisher.countDown();
+                if (!releasePublisher.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new java.io.IOException("Publisher latch timed out");
+                }
+                seen.add(event.id());
+            }).dispatchBatch(1));
+            try {
+                assertTrue(enteredPublisher.await(5, java.util.concurrent.TimeUnit.SECONDS));
+                assertEquals(1, new OutboxDispatcher(dataSource, event -> seen.add(event.id()))
+                    .dispatchBatch(1));
+            } finally {
+                releasePublisher.countDown();
+            }
+            assertEquals(1, first.get(5, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        assertEquals(java.util.Set.of(earlier.id(), later.id()), seen);
+        assertEquals(0, countPending());
+    }
+
     private static void enqueueCommitted(OutboxEvent event) throws Exception {
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
