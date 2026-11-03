@@ -1,0 +1,36 @@
+name: Java + PostgreSQL CI
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: outboxkit
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test -d outboxkit"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 6
+    env:
+      TEST_PG_URL: jdbc:postgresql://localhost:5432/outboxkit
+      TEST_PG_USER: test
+      TEST_PG_PASSWORD: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify with PostgreSQL
+        run: mvn --batch-mode --no-transfer-progress verify
