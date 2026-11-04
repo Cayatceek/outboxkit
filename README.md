@@ -42,6 +42,7 @@ Use an application scheduler to call `dispatchBatch` repeatedly. The consumer mu
 ## Guarantees and limits
 
 - Multiple workers claim different pending rows with PostgreSQL `FOR UPDATE SKIP LOCKED`.
+- **Ordering is not guaranteed across workers, including events belonging to the same aggregate**: a worker may skip an earlier locked event and publish a later event first. If ordering matters, use one dispatcher or add aggregate-key partitioning and ordering safeguards before deploying.
 - Publish + DB acknowledgment run **inside one transaction**. A batch failure rolls back all its delivery acknowledgments.
 - At-least-once delivery only; **no exactly-once guarantee**. A poison event currently blocks its batch until repaired.
 - Slow brokers hold database row locks: use small batches and bounded publisher timeouts.

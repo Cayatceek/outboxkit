@@ -57,7 +57,9 @@ public final class OutboxDispatcher {
                 }
                 connection.commit();
                 return events.size();
-            } catch (Exception failure) {
+            } catch (Exception | Error failure) {
+                // Roll back even when a publisher triggers an unchecked Error.
+                // The broker may already have received events; deduplication remains mandatory.
                 try {
                     connection.rollback();
                 } catch (SQLException rollbackFailure) {
