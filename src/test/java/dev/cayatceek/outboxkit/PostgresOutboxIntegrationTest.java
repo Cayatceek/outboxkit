@@ -63,6 +63,35 @@ class PostgresOutboxIntegrationTest {
     }
 
     @Test
+    void committedBusinessTransactionPersistsBothBusinessAndEvent() throws Exception {
+        UUID ledgerId = UUID.randomUUID();
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try (var statement = conn.prepareStatement("INSERT INTO ledger (id) VALUES (?)")) {
+                statement.setObject(1, ledgerId);
+                statement.executeUpdate();
+            }
+            new JdbcOutboxStore().enqueue(conn, OutboxEvent.create(
+                "ledger", ledgerId.toString(), "CREATED", "{}"));
+            conn.commit();
+        }
+        assertEquals(1, count("ledger"));
+        assertEquals(1, count("outbox_events"));
+    }
+
+    @Test
+    void uncheckedPublisherFailureDoesNotCommitDeliveryAcknowledgment() throws Exception {
+        enqueueCommitted(OutboxEvent.create("wallet", "w-failure", "UPDATED", "{}"));
+        OutboxDispatcher dispatcher = new OutboxDispatcher(dataSource, event -> {
+            throw new AssertionError("simulated unchecked publisher failure");
+        });
+        assertThrows(AssertionError.class, () -> dispatcher.dispatchBatch(1));
+        assertEquals(1, countPending());
+        assertEquals(1, new OutboxDispatcher(dataSource, event -> { }).dispatchBatch(1));
+        assertEquals(0, countPending());
+    }
+
+    @Test
     void committedEventIsPublishedOnceAndMarkedDelivered() throws Exception {
         OutboxEvent event = OutboxEvent.create("wallet", "w-1", "BALANCE_CHANGED", "{\"amount\":10}");
         enqueueCommitted(event);
